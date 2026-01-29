@@ -17,6 +17,14 @@
     --border-radius: 12px;
 }
 
+.ad-container-horizontal {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    padding: 20px 0;
+    overflow: hidden;
+}
+
 * {
     margin: 0;
     padding: 0;
