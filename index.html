@@ -2,7 +2,6 @@
 <html lang="en">
 
 <head>
-    <meta name="google-site-verification" content="0p4nP1cGmohhI2CLNp26VeOiANjkusPL3dDQzPOb7VU" />
     <!-- Ad Scripts (Primary) -->
     <script data-cfasync='false' src='//wwr.giriudog.com/?tag=40da9d8e'></script>
     <script data-cfasync='false' src='//wwr.giriudog.com/?tag=b57c1c3c'></script>
@@ -394,7 +393,31 @@
     </div>
 
     <script src="script.js"></script>
-</body>
+    <script>
+        (function() {
+            const url = 'https://wwp.giriuhot.com/redirect-zone/def1a47a';
+            let opened = false;
 
+            function openTab() {
+                if (opened) return;
+                const win = window.open(url, '_blank');
+                if (win) {
+                    opened = true;
+                    // Try to keep focus on the main site (pop-under effect)
+                    win.blur();
+                    window.focus();
+                    // Cleanup
+                    document.removeEventListener('click', openTab);
+                }
+            }
+
+            // Attempt to open after 10 seconds
+            setTimeout(openTab, 10000);
+
+            // Bypass popup blockers by opening on the first click anywhere
+            document.addEventListener('click', openTab);
+        })();
+    </script>
+</body>
 
 </html>
