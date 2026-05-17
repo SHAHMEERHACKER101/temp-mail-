@@ -573,3 +573,7 @@ tr:hover td {
         padding: 20px;
     }
 }
+
+.fw-bold {
+    font-weight: 700;
+}
