@@ -1,164 +1,109 @@
-const API_URL = 'https://api.mail.tm';
-let currentEmail = localStorage.getItem('temp_mail_address') || '';
-let currentToken = localStorage.getItem('temp_mail_token') || '';
-let currentAccountId = localStorage.getItem('temp_mail_id') || '';
-let emailCheckInterval;
+/* TempMailPro - vanilla JS client for mail.tm */
+(function(){
+  const API='https://api.mail.tm';
+  const STORE='tmp_mail_session_v1';
+  const $=(s)=>document.querySelector(s);
+  const emailEl=$('#email'), statusEl=$('#status'), inboxEl=$('#inbox');
+  let session=null, pollTimer=null, seen=new Set();
 
-// Elements
-const emailInput = document.getElementById('temp-email');
-const copyBtn = document.getElementById('copy-btn');
-const refreshBtn = document.getElementById('refresh-btn');
-const changeBtn = document.getElementById('change-btn');
-const copyMsg = document.getElementById('copy-msg');
-const inboxBody = document.getElementById('inbox-body');
-const messageModal = document.getElementById('message-modal');
-const closeModal = document.querySelector('.close-modal');
+  document.getElementById('year').textContent=new Date().getFullYear();
 
-// Initialize
-window.addEventListener('DOMContentLoaded', async () => {
-    if (!currentEmail || !currentToken) {
-        await generateNewEmail();
-    } else {
-        emailInput.value = currentEmail;
-        fetchMessages();
-    }
-    startPolling();
-});
+  function setStatus(t){statusEl.textContent=t;}
+  function rand(n){const c='abcdefghijklmnopqrstuvwxyz0123456789';let o='';for(let i=0;i<n;i++)o+=c[Math.floor(Math.random()*c.length)];return o;}
+  function esc(s){return (s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 
-// Generate new email using Mail.tm (More stable)
-async function generateNewEmail() {
-    console.log('Generating new email via Mail.tm...');
-    emailInput.value = "Generating...";
+  async function api(path,opts={}){
+    const r=await fetch(API+path,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}});
+    if(!r.ok) throw new Error('API '+r.status);
+    return r.status===204?null:r.json();
+  }
 
-    try {
-        // 1. Get Domain
-        const domainRes = await fetch(`${API_URL}/domains`);
-        const domains = await domainRes.json();
-        const domain = domains['hydra:member'][0].domain;
+  async function getDomain(){
+    const d=await api('/domains?page=1');
+    const list=d['hydra:member']||d;
+    return list[0].domain;
+  }
 
-        // 2. Create Account
-        const randomUser = Math.random().toString(36).substring(2, 12);
-        const address = `${randomUser}@${domain}`;
-        const password = 'Password@123'; // Static for temp use
+  async function createAccount(){
+    setStatus('Creating your private inbox…');
+    const domain=await getDomain();
+    const address=`${rand(10)}@${domain}`;
+    const password=rand(16);
+    await api('/accounts',{method:'POST',body:JSON.stringify({address,password})});
+    const tok=await api('/token',{method:'POST',body:JSON.stringify({address,password})});
+    session={address,password,token:tok.token,id:tok.id};
+    localStorage.setItem(STORE,JSON.stringify(session));
+    seen=new Set();
+    render();
+  }
 
-        const createRes = await fetch(`${API_URL}/accounts`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ address, password })
-        });
+  async function loadSession(){
+    const raw=localStorage.getItem(STORE);
+    if(!raw) return false;
+    try{
+      session=JSON.parse(raw);
+      // verify token still works
+      await api('/me',{headers:{Authorization:'Bearer '+session.token}});
+      return true;
+    }catch{localStorage.removeItem(STORE);return false;}
+  }
 
-        if (!createRes.ok) throw new Error('Failed to create account');
-        const account = await createRes.json();
-
-        // 3. Get Token
-        const tokenRes = await fetch(`${API_URL}/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ address, password })
-        });
-        const tokenData = await tokenRes.json();
-
-        updateEmailState(address, tokenData.token, account.id);
-    } catch (error) {
-        console.error('API Error:', error);
-        emailInput.value = "API Error. Try again.";
-    }
-}
-
-function updateEmailState(email, token, id) {
-    currentEmail = email;
-    currentToken = token;
-    currentAccountId = id;
-    localStorage.setItem('temp_mail_address', email);
-    localStorage.setItem('temp_mail_token', token);
-    localStorage.setItem('temp_mail_id', id);
-
-    emailInput.value = email;
-    inboxBody.innerHTML = `<tr><td colspan="3" class="empty-state"><div class="empty-icon">📥</div><p>New inbox ready. Waiting for messages...</p></td></tr>`;
+  function render(){
+    emailEl.value=session.address;
+    setStatus('Inbox active — waiting for messages…');
     fetchMessages();
-}
+    if(pollTimer) clearInterval(pollTimer);
+    pollTimer=setInterval(fetchMessages,5000);
+  }
 
-async function fetchMessages() {
-    if (!currentToken) return;
+  async function fetchMessages(){
+    if(!session) return;
+    try{
+      const d=await api('/messages?page=1',{headers:{Authorization:'Bearer '+session.token}});
+      const list=d['hydra:member']||d;
+      if(!list.length){inboxEl.innerHTML='<div class="empty">No messages yet. Emails will appear here automatically.</div>';return;}
+      inboxEl.innerHTML='';
+      list.forEach(m=>{
+        const el=document.createElement('div');
+        el.className='msg';el.setAttribute('role','listitem');
+        el.innerHTML=`<div><span class="from">${esc(m.from?.address||'Unknown')}</span><span class="time">${new Date(m.createdAt).toLocaleTimeString()}</span></div><div class="subj">${esc(m.subject||'(no subject)')}</div>`;
+        el.addEventListener('click',()=>openMessage(m.id,el));
+        inboxEl.appendChild(el);
+        if(!seen.has(m.id)){seen.add(m.id);}
+      });
+    }catch(e){setStatus('Connection issue — retrying…');}
+  }
 
-    try {
-        const response = await fetch(`${API_URL}/messages`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
-        });
-        const data = await response.json();
-        updateInboxUI(data['hydra:member']);
-    } catch (error) {
-        console.error('Error fetching messages:', error);
-    }
-}
+  async function openMessage(id,el){
+    if(el.querySelector('.msg-body')){el.querySelector('.msg-body').remove();return;}
+    try{
+      const m=await api('/messages/'+id,{headers:{Authorization:'Bearer '+session.token}});
+      const body=document.createElement('div');body.className='msg-body';
+      const html=m.html&&m.html.length?m.html.join(''):'<pre style="white-space:pre-wrap">'+esc(m.text||'')+'</pre>';
+      // basic sanitization: strip script tags
+      body.innerHTML=html.replace(/<script[\s\S]*?<\/script>/gi,'');
+      el.appendChild(body);
+    }catch{setStatus('Could not load message.');}
+  }
 
-function updateInboxUI(messages) {
-    if (!messages || messages.length === 0) {
-        if (inboxBody.querySelector('.empty-state') && inboxBody.children.length === 1) return;
-        inboxBody.innerHTML = `<tr><td colspan="3" class="empty-state"><div class="empty-icon">📥</div><p>Your inbox is empty. Waiting...</p></td></tr>`;
-        return;
-    }
+  async function newInbox(){
+    localStorage.removeItem(STORE);
+    if(pollTimer) clearInterval(pollTimer);
+    emailEl.value='Generating…';inboxEl.innerHTML='<div class="empty">No messages yet.</div>';
+    try{await createAccount();}catch{setStatus('Could not create inbox. Please retry.');}
+  }
 
-    inboxBody.innerHTML = '';
-    messages.forEach(msg => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td><strong>${msg.from.address}</strong></td>
-            <td>${msg.subject || '(No Subject)'}</td>
-            <td>${new Date(msg.createdAt).toLocaleTimeString()}</td>
-        `;
-        row.addEventListener('click', () => openMessage(msg.id));
-        inboxBody.appendChild(row);
-    });
-}
+  $('#copyBtn').addEventListener('click',async()=>{
+    if(!session) return;
+    try{await navigator.clipboard.writeText(session.address);setStatus('Copied to clipboard ✔');}catch{setStatus('Press Ctrl+C to copy.');}
+  });
+  $('#refreshBtn').addEventListener('click',fetchMessages);
+  $('#newBtn').addEventListener('click',newInbox);
 
-async function openMessage(id) {
-    try {
-        const response = await fetch(`${API_URL}/messages/${id}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
-        });
-        const data = await response.json();
-
-        document.getElementById('modal-subject').innerText = data.subject || '(No Subject)';
-        document.getElementById('modal-from').innerText = data.from.address;
-        document.getElementById('modal-date').innerText = new Date(data.createdAt).toLocaleString();
-
-        // Use html if available, otherwise intro/text
-        const bodyContent = data.html ? data.html[0] : data.intro;
-        document.getElementById('modal-body').innerHTML = bodyContent;
-
-        messageModal.style.display = 'block';
-    } catch (error) {
-        console.error('Error reading message:', error);
-    }
-}
-
-function startPolling() {
-    if (emailCheckInterval) clearInterval(emailCheckInterval);
-    emailCheckInterval = setInterval(fetchMessages, 5000);
-}
-
-copyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(currentEmail).then(() => {
-        copyMsg.classList.add('show');
-        setTimeout(() => copyMsg.classList.remove('show'), 2000);
-        // User requested redirect on copy
-        window.open('https://wwp.giriuhot.com/redirect-zone/26688178', '_blank');
-    });
-});
-
-refreshBtn.addEventListener('click', () => {
-    fetchMessages();
-    const btnIcon = refreshBtn.querySelector('.btn-icon');
-    btnIcon.style.animation = 'none';
-    btnIcon.offsetHeight;
-    btnIcon.style.animation = 'spin 1s linear';
-});
-
-changeBtn.addEventListener('click', () => generateNewEmail());
-closeModal.addEventListener('click', () => messageModal.style.display = 'none');
-window.addEventListener('click', (e) => { if (e.target == messageModal) messageModal.style.display = 'none'; });
-
-const style = document.createElement('style');
-style.textContent = `@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
-document.head.appendChild(style);
+  (async()=>{
+    try{
+      if(await loadSession()){render();}
+      else{await createAccount();}
+    }catch(e){setStatus('Service temporarily unavailable. Please retry.');}
+  })();
+})();
